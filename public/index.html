@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#1C2B35">
+<title>PlanAway — field-note travel planning</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper:    #EDE5D0;
+  --paper2:   #F5F0E4;
+  --paper3:   #FBF8F0;
+  --ink:      #1C2B35;
+  --ink2:     #4A5E68;
+  --rule:     #C8BAA0;
+  --rule2:    #DDD5C0;
+  --red:      #B83232;      /* airmail red */
+  --brass:    #9A7340;      /* compass brass */
+  --sea:      #2A6B5A;      /* good weather */
+  --rain:     #6A5A3A;      /* rainy */
+  --f-display: 'Playfair Display', Georgia, serif;
+  --f-body:    'Inter', system-ui, sans-serif;
+  --f-mono:    'JetBrains Mono', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  font-family: var(--f-body);
+  background: var(--paper);
+  color: var(--ink);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* aged paper texture via noise pattern */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+}
+
+/* ── HEADER ─────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 24px;
+  background: var(--ink);
+  flex-shrink: 0;
+  border-bottom: 3px solid var(--red);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.logo-stamp {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--paper);
+  background: var(--red);
+  color: var(--paper3);
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: -1px;
+}
+.logo-text { line-height: 1.1; }
+.logo-text h1 {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--paper);
+  letter-spacing: -.3px;
+}
+.logo-text .sub {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: #7A9198;
+}
+
+.head-actions { display: flex; align-items: center; gap: 12px; }
+.new-btn {
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  background: transparent;
+  border: 1px solid #3A5060;
+  color: #8AAAB8;
+  padding: 6px 13px;
+  cursor: pointer;
+  transition: .15s;
+}
+.new-btn:hover { border-color: var(--paper); color: var(--paper); }
+
+.live-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: #4DB890;
+}
+.live-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #4DB890;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.25} }
+
+/* ── LUGGAGE TAGS ────────────────────────────── */
+#tags {
+  display: none;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px 24px;
+  background: var(--paper2);
+  border-bottom: 1px dashed var(--rule);
+  flex-shrink: 0;
+}
+.l-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--ink2);
+  background: var(--paper3);
+  border: 1px solid var(--rule);
+  padding: 4px 10px;
+  border-radius: 2px 14px 14px 2px;
+  position: relative;
+}
+.l-tag::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--brass);
+  display: inline-block;
+  flex-shrink: 0;
+}
+.l-tag b { color: var(--ink); font-family: var(--f-body); font-weight: 600; }
+
+/* ── DEPARTURE BOARD ─────────────────────────── */
+#board {
+  display: none;
+  background: var(--ink);
+  border-bottom: 1px solid #2A3E4A;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+#board::-webkit-scrollbar { height: 3px; }
+#board::-webkit-scrollbar-thumb { background: #2A3E4A; }
+
+#board-inner {
+  display: flex;
+  align-items: stretch;
+  min-height: 52px;
+  white-space: nowrap;
+  padding: 0 24px;
+}
+.board-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px 0 0;
+  margin-right: 16px;
+  border-right: 1px solid #2A3E4A;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: #4A6A78;
+}
+.board-label .bl { color: var(--brass); }
+.flap {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 0 14px;
+  border-right: 1px solid #243540;
+}
+.flap .fd { font-family: var(--f-mono); font-size: 9px; color: #4A6A78; letter-spacing: .4px; }
+.flap .ft { font-size: 14px; color: var(--paper); margin: 2px 0; }
+.flap .fc { font-family: var(--f-mono); font-size: 9px; letter-spacing: .6px; text-transform: uppercase; }
+.flap.good .fc { color: #4DB890; }
+.flap.bad  .fc { color: #D4835A; }
+
+/* ── CHAT ────────────────────────────────────── */
+#chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px 24px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  scroll-behavior: smooth;
+}
+#chat::-webkit-scrollbar { width: 4px; }
+#chat::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 2px; }
+
+/* Welcome */
+.welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 18px;
+  padding: 32px 20px;
+}
+.compass-wrap {
+  width: 80px; height: 80px;
+  position: relative;
+}
+.compass-circle {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--paper3);
+  box-shadow: 3px 3px 0 var(--rule);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+/* compass rose */
+.compass-circle::before, .compass-circle::after {
+  content: '';
+  position: absolute;
+}
+.compass-circle::before {
+  width: 0; height: 0;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-bottom: 26px solid var(--red);
+  top: 10px;
+}
+.compass-circle::after {
+  width: 0; height: 0;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-top: 26px solid var(--ink);
+  bottom: 10px;
+}
+
+.welcome h2 {
+  font-family: var(--f-display);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -.5px;
+  color: var(--ink);
+}
+.welcome p {
+  color: var(--ink2);
+  font-size: 15px;
+  max-width: 440px;
+  line-height: 1.65;
+}
+.qs-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  max-width: 540px;
+  margin-top: 6px;
+}
+.qs {
+  font-family: var(--f-body);
+  font-size: 13.5px;
+  font-weight: 500;
+  background: var(--paper3);
+  border: 1.5px solid var(--ink);
+  padding: 9px 16px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--rule);
+  transition: .15s;
+}
+.qs:hover {
+  box-shadow: 2px 2px 0 var(--red);
+  border-color: var(--red);
+  color: var(--red);
+  transform: translate(-1px, -1px);
+}
+
+/* Messages */
+.msg { display: flex; gap: 12px; animation: rise .3s ease; }
+@keyframes rise { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+.msg.user { flex-direction: row-reverse; }
+
+.avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  border: 1.5px solid var(--ink);
+}
+.msg.ai   .avatar { background: var(--red); color: var(--paper3); }
+.msg.user .avatar { background: var(--ink); color: var(--paper); }
+
+.bubble {
+  max-width: 76%;
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+.msg.ai .bubble {
+  background: var(--paper3);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--red);
+  padding: 14px 18px;
+  box-shadow: 2px 2px 0 var(--rule2);
+}
+.msg.user .bubble {
+  background: var(--ink);
+  color: var(--paper2);
+  padding: 12px 16px;
+  border-radius: 3px;
+}
+
+/* Bubble markdown */
+.bubble h2, .bubble h3 {
+  font-family: var(--f-display);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 18px 0 7px;
+  padding-bottom: 5px;
+  border-bottom: 1px dashed var(--rule);
+  letter-spacing: -.2px;
+}
+.bubble h2:first-child, .bubble h3:first-child { margin-top: 0; }
+.bubble strong { font-weight: 600; }
+.bubble em { color: var(--ink2); }
+.bubble a { color: var(--red); text-decoration: none; border-bottom: 1px solid rgba(184,50,50,.3); }
+.bubble a:hover { border-color: var(--red); }
+.bubble ul { list-style: none; margin: 9px 0; padding: 0; }
+.bubble ul li { position: relative; padding-left: 18px; margin: 5px 0; }
+.bubble ul li::before {
+  content: '';
+  position: absolute;
+  left: 3px; top: 9px;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--brass);
+}
+.bubble ol { margin: 9px 0 9px 18px; }
+.bubble ol li { margin: 5px 0; }
+.bubble p { margin: 7px 0; }
+.bubble code {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  background: var(--paper2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--red);
+}
+.msg.user .bubble a { color: #E9C87A; }
+
+.search-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--sea);
+  border: 1px dashed var(--sea);
+  padding: 3px 8px;
+  margin-bottom: 10px;
+  border-radius: 2px;
+}
+
+/* Booking ticket */
+.ticket {
+  margin-top: 16px;
+  border: 1.5px dashed var(--ink);
+  background: var(--paper2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ticket-hd {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--ink2);
+  padding: 8px 13px 4px;
+}
+.ticket a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 13px;
+  border-top: 1px dashed var(--rule);
+  text-decoration: none;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: .12s;
+  border-bottom: none;
+}
+.ticket a:hover { background: var(--paper3); color: var(--red); }
+.ticket a .arrow { margin-left: auto; color: var(--brass); font-family: var(--f-mono); font-size: 12px; }
+
+/* Typing */
+.typing { display: flex; gap: 5px; padding: 6px 2px; }
+.typing span {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--brass);
+  animation: hop 1.1s infinite;
+}
+.typing span:nth-child(2){animation-delay:.15s}
+.typing span:nth-child(3){animation-delay:.3s}
+@keyframes hop{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-7px);opacity:1}}
+
+/* ── INPUT DOCK ──────────────────────────────── */
+#dock {
+  padding: 12px 24px 16px;
+  border-top: 1.5px solid var(--ink);
+  background: var(--paper2);
+  flex-shrink: 0;
+}
+#qr-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+.qr {
+  font-family: var(--f-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  background: var(--paper3);
+  border: 1px solid var(--rule);
+  padding: 5px 11px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: .12s;
+}
+.qr:hover { border-color: var(--red); color: var(--red); }
+
+.input-row { display: flex; gap: 10px; align-items: flex-end; }
+#field {
+  flex: 1;
+  background: var(--paper3);
+  border: 1.5px solid var(--ink);
+  padding: 11px 15px;
+  font-family: var(--f-body);
+  font-size: 14.5px;
+  color: var(--ink);
+  resize: none;
+  min-height: 48px;
+  max-height: 130px;
+  outline: none;
+  line-height: 1.5;
+  transition: .15s;
+}
+#field::placeholder { color: var(--ink2); }
+#field:focus { border-color: var(--red); }
+
+#send-btn {
+  width: 48px; height: 48px;
+  flex-shrink: 0;
+  background: var(--red);
+  border: 1.5px solid var(--ink);
+  color: var(--paper);
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--ink);
+  transition: .12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#send-btn:hover:not(:disabled) { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--ink); }
+#send-btn:active:not(:disabled){ transform: translate(1px,1px); box-shadow: none; }
+#send-btn:disabled { background: var(--rule); border-color: var(--rule2); box-shadow: none; cursor: wait; }
+
+.hint {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: .5px;
+  color: var(--ink2);
+  text-align: center;
+  margin-top: 9px;
+}
+
+@media (max-width: 620px) {
+  .bubble { max-width: 88%; font-size: 14px; }
+  header { padding: 12px 16px; }
+  #chat, #dock, #tags, #board-inner { padding-left: 16px; padding-right: 16px; }
+  .welcome h2 { font-size: 26px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-stamp">PA</div>
+    <div class="logo-text">
+      <h1>PlanAway</h1>
+      <div class="sub">autonomous travel planning</div>
+    </div>
+  </div>
+  <div class="head-actions">
+    <button class="new-btn" id="new-btn">+ New trip</button>
+    <div class="live-badge"><span class="live-dot"></span>live search</div>
+  </div>
+</header>
+
+<div id="tags"></div>
+<div id="board"><div id="board-inner"></div></div>
+
+<div id="chat">
+  <div class="welcome" id="welcome">
+    <div class="compass-wrap">
+      <div class="compass-circle"></div>
+    </div>
+    <h2>Where to?</h2>
+    <p>Tell me your destination and I'll build a complete, weather-adapted, day-by-day plan — finding real places via live search, tuned to your group and what you love doing.</p>
+    <div class="qs-grid">
+      <div class="qs" onclick="qs('Plan 10 days in Japan in early April — two of us, we love food, design and quiet temples')">🇯🇵 Japan · 10 days</div>
+      <div class="qs" onclick="qs('Plan 2 weeks in Australia with my wife and two kids aged 6 and 9')">🇦🇺 Australia · family</div>
+      <div class="qs" onclick="qs('Plan a romantic 5 days in Lisbon, mid-range budget')">🇵🇹 Lisbon · couple</div>
+      <div class="qs" onclick="qs('Plan 8 days in Thailand with 3 friends — beaches, food, some nightlife')">🇹🇭 Thailand · friends</div>
+    </div>
+  </div>
+</div>
+
+<div id="dock">
+  <div id="qr-chips"></div>
+  <div class="input-row">
+    <textarea id="field" rows="1" placeholder="Where are you going?"></textarea>
+    <button id="send-btn">↗</button>
+  </div>
+  <div class="hint">groq · tavily live search · open-meteo forecast · booking deep links</div>
+</div>
+
+<script>
+const chatEl  = document.getElementById('chat');
+const tagsEl  = document.getElementById('tags');
+const boardEl = document.getElementById('board');
+const boardIn = document.getElementById('board-inner');
+const qrEl    = document.getElementById('qr-chips');
+const field   = document.getElementById('field');
+const sendBtn = document.getElementById('send-btn');
+
+let history = [];
+let trip    = {};
+
+/* ── AUTO-RESIZE ──── */
+field.addEventListener('input', () => {
+  field.style.height = 'auto';
+  field.style.height = Math.min(field.scrollHeight, 130) + 'px';
+});
+field.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+sendBtn.addEventListener('click', send);
+document.getElementById('new-btn').addEventListener('click', reset);
+
+function qs(t) { const w = document.getElementById('welcome'); if(w) w.remove(); field.value = t; send(); }
+
+/* ── MARKDOWN RENDERER ──── */
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function inline(t) {
+  return esc(t)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+?)\*/g, '$1<em>$2</em>')
+    .replace(/`([^`]+?)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)"]+)/g, (m,p,u) => `${p}<a href="${u}" target="_blank" rel="noopener">${u.replace(/^https?:\/\/(www\.)?/,'').slice(0,40)}</a>`);
+}
+function md(src) {
+  const lines = src.split('\n'); let out = ''; let list = null;
+  const closeList = () => { if(list){ out += `</${list}>`; list = null; } };
+  for (const raw of lines) {
+    const l = raw.trimEnd();
+    if (/^#{1,3}\s+/.test(l)) { closeList(); out += `<h3>${inline(l.replace(/^#{1,3}\s+/,''))}</h3>`; continue; }
+    if (/^[-*]\s+/.test(l))   { if(list!=='ul'){closeList();list='ul';out+='<ul>';} out += `<li>${inline(l.replace(/^[-*]\s+/,''))}</li>`; continue; }
+    if (/^\d+\.\s+/.test(l))  { if(list!=='ol'){closeList();list='ol';out+='<ol>';} out += `<li>${inline(l.replace(/^\d+\.\s+/,''))}</li>`; continue; }
+    if (l.trim() === '')       { closeList(); continue; }
+    closeList(); out += `<p>${inline(l)}</p>`;
+  }
+  closeList(); return out;
+}
+
+/* ── ADD MESSAGE ──── */
+function addMsg(role, text, meta = {}) {
+  const m = document.createElement('div'); m.className = 'msg ' + role;
+  const av = document.createElement('div'); av.className = 'avatar';
+  av.textContent = role === 'ai' ? '✈' : '•';
+  const b = document.createElement('div'); b.className = 'bubble';
+
+  if (meta.searches > 0) {
+    const st = document.createElement('div'); st.className = 'search-stamp';
+    st.innerHTML = `✦ searched the web ${meta.searches}×`;
+    b.appendChild(st);
+  }
+
+  const c = document.createElement('div'); c.innerHTML = md(text); b.appendChild(c);
+
+  if (meta.links) {
+    const tk = document.createElement('div'); tk.className = 'ticket';
+    tk.innerHTML = `<div class="ticket-hd">Book it</div>
+      <a href="${meta.links.booking}" target="_blank" rel="noopener">🏨 Hotels on Booking.com<span class="arrow">↗</span></a>
+      <a href="${meta.links.airbnb}"  target="_blank" rel="noopener">🏠 Stays on Airbnb<span class="arrow">↗</span></a>
+      <a href="${meta.links.cars}"    target="_blank" rel="noopener">🚗 Rental cars<span class="arrow">↗</span></a>
+      <a href="${meta.links.maps}"    target="_blank" rel="noopener">🗺 Explore on Google Maps<span class="arrow">↗</span></a>`;
+    b.appendChild(tk);
+  }
+
+  m.appendChild(av); m.appendChild(b);
+  chatEl.appendChild(m);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function showTyping(on) {
+  let t = document.getElementById('__typing');
+  if (on) {
+    if (t) return;
+    const m = document.createElement('div'); m.className = 'msg ai'; m.id = '__typing';
+    m.innerHTML = `<div class="avatar">✈</div><div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
+    chatEl.appendChild(m); chatEl.scrollTop = chatEl.scrollHeight;
+  } else if (t) t.remove();
+}
+
+/* ── TAGS BAR ──── */
+function renderTags() {
+  const c = [];
+  if (trip.destination)  c.push(`📍 <b>${trip.destination}</b>`);
+  if (trip.arrivalDate)  c.push(`📅 <b>${trip.arrivalDate}${trip.departureDate?' → '+trip.departureDate:''}</b>`);
+  if (trip.groupSize)    c.push(`👥 <b>${trip.groupSize}</b>`);
+  if (trip.hasChildren)  c.push(`🧸 <b>with kids</b>`);
+  if (trip.travelStyle)  c.push(`✦ <b>${trip.travelStyle}</b>`);
+  if (trip.budget)       c.push(`💰 <b>${trip.budget}</b>`);
+  if (c.length) {
+    tagsEl.style.display = 'flex';
+    tagsEl.innerHTML = c.map(x => `<span class="l-tag">${x}</span>`).join('');
+  }
+}
+
+/* ── DEPARTURE BOARD ──── */
+const glyphs = c => c===0?'☀️':c<=3?'⛅':c<=48?'🌫️':c<=67?'🌧️':c<=77?'❄️':c<=82?'🌦️':'⛈️';
+function renderBoard(w) {
+  if (!w?.board?.length) return;
+  boardEl.style.display = 'block';
+  boardIn.innerHTML = `<div class="board-label"><span class="bl">⌖</span>${w.location}</div>` +
+    w.board.map(d => {
+      const label = new Date(d.date).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+      return `<div class="flap ${d.good?'good':'bad'}">
+        <div class="fd">${label}</div>
+        <div class="ft">${glyphs(d.code)} ${d.lo}–${d.hi}°</div>
+        <div class="fc">${d.good?'outdoor':'indoor'}</div>
+      </div>`;
+    }).join('');
+}
+
+/* ── EXTRACT TRIP DATA ──── */
+function extract(msg) {
+  const l = msg.toLowerCase();
+  const dm = msg.match(/\b(?:to|in|visit(?:ing)?|trip to|days? in|weeks? in)\s+([A-ZА-Я][\wÀ-ÿА-я\s]{2,20}?)(?:\s+(?:for|with|in|from|during)|[,\.]|$)/);
+  if (dm && !trip.destination) trip.destination = dm[1].trim();
+  const dys = msg.match(/(\d+)\s*(?:days?|дни|дена)/); if (dys) trip.durationDays = +dys[1];
+  const wks = msg.match(/(\d+)\s*(?:weeks?|седмиц)/);  if (wks) trip.durationDays = +wks[1]*7;
+  if (/(family|children|kids|деца|дете)/.test(l))     trip.hasChildren = true;
+  if (/(romantic|couple|wife|husband|girlfriend|boyfriend|partner|съпруг)/.test(l)) { trip.travelStyle='couple'; if(!trip.groupSize) trip.groupSize=2; }
+  if (/(friends|приятели)/.test(l))                    trip.travelStyle = 'friends';
+  if (/(solo|alone|сам[аo]?)/.test(l))                { trip.travelStyle='solo'; trip.groupSize=1; }
+  const pe = msg.match(/(\d+)\s*(?:people|adults?|persons?|of us|човека|души)/); if (pe) trip.groupSize=+pe[1];
+  const ds = msg.match(/\d{4}-\d{2}-\d{2}/g); if (ds?.length>=2) { trip.arrivalDate=ds[0]; trip.departureDate=ds[1]; }
+  if (/(budget|cheap|affordable|евтин)/.test(l))       trip.budget = 'budget';
+  else if (/(luxury|premium|луксоз)/.test(l))          trip.budget = 'luxury';
+  else if (/(mid.range|moderate|средн)/.test(l))       trip.budget = 'mid-range';
+}
+
+/* ── SEND ──── */
+async function send() {
+  const text = field.value.trim();
+  if (!text || sendBtn.disabled) return;
+  const w = document.getElementById('welcome'); if (w) w.remove();
+  qrEl.innerHTML = '';
+  addMsg('user', text);
+  field.value = ''; field.style.height = 'auto';
+  extract(text); renderTags();
+  history.push({ role: 'user', content: text });
+  sendBtn.disabled = true; showTyping(true);
+
+  try {
+    const res = await fetch('/api/plan', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tripData: trip, conversationHistory: history })
+    });
+    const data = await res.json();
+    showTyping(false);
+
+    if (data.error || !data.ok) {
+      addMsg('ai', `**Something went wrong.**\n${data.message || data.error || 'Please try again.'}`);
+    } else {
+      if (data.weather) renderBoard(data.weather);
+      const showLinks = !!data.links && (data.searchesUsed > 0 || history.length >= 4);
+      addMsg('ai', data.message, { searches: data.searchesUsed, links: showLinks ? data.links : null });
+      history.push({ role: 'assistant', content: data.message });
+    }
+  } catch(e) {
+    showTyping(false);
+    addMsg('ai', '**Connection problem.** Please try again in a moment.');
+  }
+
+  sendBtn.disabled = false;
+  field.focus();
+}
+
+/* ── RESET ──── */
+function reset() {
+  history = []; trip = {};
+  chatEl.innerHTML = '';
+  tagsEl.style.display = 'none'; tagsEl.innerHTML = '';
+  boardEl.style.display = 'none'; boardIn.innerHTML = '';
+  qrEl.innerHTML = '';
+
+  const w = document.createElement('div'); w.className = 'welcome'; w.id = 'welcome';
+  w.innerHTML = `
+    <div class="compass-wrap"><div class="compass-circle"></div></div>
+    <h2>Where to?</h2>
+    <p>Tell me your destination and I'll build a complete, weather-adapted, day-by-day plan — finding real places via live search, tuned to your group and what you love doing.</p>
+    <div class="qs-grid">
+      <div class="qs" onclick="qs('Plan 10 days in Japan in early April — two of us, we love food, design and quiet temples')">🇯🇵 Japan · 10 days</div>
+      <div class="qs" onclick="qs('Plan 2 weeks in Australia with my wife and two kids aged 6 and 9')">🇦🇺 Australia · family</div>
+      <div class="qs" onclick="qs('Plan a romantic 5 days in Lisbon, mid-range budget')">🇵🇹 Lisbon · couple</div>
+      <div class="qs" onclick="qs('Plan 8 days in Thailand with 3 friends — beaches, food, some nightlife')">🇹🇭 Thailand · friends</div>
+    </div>`;
+  chatEl.appendChild(w);
+}
+</script>
+</body>
+</html>
