@@ -1,0 +1,14 @@
+{
+  "name": "planaway",
+  "version": "1.0.0",
+  "description": "Autonomous AI travel planning agent — Groq + Tavily + Netlify",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
