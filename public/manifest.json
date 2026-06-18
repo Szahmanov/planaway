@@ -1,0 +1,10 @@
+{
+  "name": "PlanAway",
+  "short_name": "PlanAway",
+  "description": "Autonomous AI travel planning",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#EDE5D0",
+  "theme_color": "#1C2B35",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
