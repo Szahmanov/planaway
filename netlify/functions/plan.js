@@ -2,7 +2,7 @@ const fetch = require('node-fetch');
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = 'llama-3.1-8b-instant'; // 100k TPM free tier — avoids 413 errors
 
 /* ─── WEATHER ─────────────────────────────────────────────── */
 
@@ -97,7 +97,7 @@ async function tavilySearch(query) {
         query,
         search_depth: 'basic',
         include_answer: true,
-        max_results: 5
+        max_results: 3
       })
     });
     if (!r.ok) {
@@ -106,9 +106,11 @@ async function tavilySearch(query) {
       return { error: `Tavily error ${r.status}` };
     }
     const data = await r.json();
-    // Return clean text for Groq — title + snippet per result
-    const results = (data.results || []).map(x => `**${x.title}**\n${x.content}\nURL: ${x.url}`).join('\n\n');
-    return { answer: data.answer || '', results, raw: data.results || [] };
+    // Truncate results to keep token count low in agentic loops
+    const results = (data.results || []).slice(0, 3).map(x =>
+      `**${x.title}**\n${(x.content || '').slice(0, 250)}\nURL: ${x.url}`
+    ).join('\n\n');
+    return { answer: (data.answer || '').slice(0, 300), results, raw: data.results || [] };
   } catch(e) {
     console.error('Tavily fetch error:', e.message);
     return { error: e.message };
@@ -153,7 +155,7 @@ const TOOLS = [{
 async function runAgentLoop(messages, systemPrompt) {
   let allMessages = [...messages];
   let searchesUsed = 0;
-  const MAX_SEARCHES = 4; // stay within free tier comfortably
+  const MAX_SEARCHES = 2; // keep tokens low on free tier // stay within free tier comfortably
 
   for (let turn = 0; turn < 6; turn++) {
     const body = {
