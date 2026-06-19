@@ -1,10 +1,12 @@
 const fetch = require('node-fetch');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const TAVILY_API_KEY     = process.env.TAVILY_API_KEY;
 
-// gemini-2.0-flash: 1,000,000 TPM free tier — no rate limit issues
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=';
+// OpenRouter free models — :free suffix = zero cost, no credit card
+// llama-4-maverick is the best free model available (128K context, strong reasoning)
+// fallback: deepseek/deepseek-chat:free
+const MODEL = 'meta-llama/llama-4-maverick:free';
 
 /* ─── WEATHER ────────────────────────────────── */
 
@@ -93,7 +95,7 @@ async function searchWeb(query) {
     out += snippets;
     return out;
   } catch(e) {
-    return '[search error: ' + e.message + ']';
+    return '[search error]';
   }
 }
 
@@ -117,8 +119,8 @@ function buildLinks(t) {
 
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method not allowed' };
-  if (!GEMINI_API_KEY)  return { statusCode: 500, body: JSON.stringify({ error: 'GEMINI_API_KEY not set on server.' }) };
-  if (!TAVILY_API_KEY)  return { statusCode: 500, body: JSON.stringify({ error: 'TAVILY_API_KEY not set on server.' }) };
+  if (!OPENROUTER_API_KEY) return { statusCode: 500, body: JSON.stringify({ error: 'OPENROUTER_API_KEY not set on server.' }) };
+  if (!TAVILY_API_KEY)     return { statusCode: 500, body: JSON.stringify({ error: 'TAVILY_API_KEY not set on server.' }) };
 
   var body;
   try { body = JSON.parse(event.body || '{}'); }
@@ -129,7 +131,7 @@ exports.handler = async function(event) {
   if (!conversationHistory.length) return { statusCode: 400, body: JSON.stringify({ error: 'No messages' }) };
 
   try {
-    // 1. Weather + web search run in parallel before the LLM call
+    // 1. Weather + Tavily in parallel — before LLM call
     var weatherPromise = (tripData.destination && tripData.arrivalDate && tripData.departureDate)
       ? getWeather(tripData.destination, tripData.arrivalDate, tripData.departureDate)
       : Promise.resolve({ ok: false });
@@ -142,15 +144,15 @@ exports.handler = async function(event) {
 
     var searchPromise = (dest && lastUserMsg.length > 8)
       ? Promise.all([
-          searchWeb('top things to do attractions ' + dest + ' ' + new Date().getFullYear()),
+          searchWeb('top attractions things to do ' + dest + ' ' + new Date().getFullYear()),
           searchWeb('best local restaurants food ' + dest)
         ])
       : Promise.resolve(null);
 
-    var results = await Promise.all([weatherPromise, searchPromise]);
-    var weather       = results[0];
-    var searchResults = results[1];
-    var searchesUsed  = searchResults ? 2 : 0;
+    var resolved    = await Promise.all([weatherPromise, searchPromise]);
+    var weather     = resolved[0];
+    var searches    = resolved[1];
+    var searchesUsed = searches ? 2 : 0;
 
     var links = buildLinks(tripData);
 
@@ -159,80 +161,87 @@ exports.handler = async function(event) {
     if (weather.ok) {
       weatherCtx = weather.summary;
     } else if (weather.reason === 'too_far') {
-      weatherCtx = 'Trip is more than 16 days away — no live forecast available yet. Describe typical seasonal weather for ' + (tripData.destination || 'the destination') + ' during those dates instead.';
+      weatherCtx = 'Trip is more than 16 days away — no live forecast yet. Describe typical seasonal weather for ' + (tripData.destination || 'the destination') + ' during those dates instead.';
     } else if (weather.reason === 'past') {
       weatherCtx = 'Those dates are in the past.';
     }
 
     var searchCtx = '';
-    if (searchResults) {
-      searchCtx = 'WEB SEARCH RESULTS (use specific named places from these in your plan):\n\nAttractions & things to do:\n' + searchResults[0] + '\n\nFood & restaurants:\n' + searchResults[1] + '\n\n';
+    if (searches) {
+      searchCtx = 'WEB SEARCH RESULTS (use specific named places from these):\n\nAttractions:\n' + searches[0] + '\n\nRestaurants & food:\n' + searches[1] + '\n\n';
     }
 
     var bookingCtx = links
       ? 'Hotels: ' + links.booking + '\nAirbnb: ' + links.airbnb + '\nCars: ' + links.cars + '\nMap: ' + links.maps
-      : 'Provide destination to generate links.';
+      : 'Need destination to generate links.';
 
-    var systemPrompt = 'You are PlanAway, an autonomous AI travel planning agent. You create complete, highly personalized day-by-day travel itineraries.\n\n' +
+    var systemPrompt =
+      'You are PlanAway, an autonomous AI travel planning agent. You create complete, highly personalized day-by-day travel itineraries.\n\n' +
       'PROCESS:\n' +
-      '1. If missing key facts, ask maximum 2 short questions. Key facts needed: destination, exact dates, who is travelling (adults/kids+ages), interests & pace, budget level, visited before?, transport preference (rental car vs taxi/transit), accommodation type.\n' +
-      '2. Once you have enough information: BUILD the full day-by-day itinerary immediately. Do not keep asking.\n' +
+      '1. If missing key facts, ask maximum 2 short questions. Key facts: destination, exact dates, who is travelling (adults/kids+ages), interests & pace, budget, visited before, transport preference, accommodation type.\n' +
+      '2. Once you have enough: BUILD the full day-by-day itinerary immediately. Do not keep asking.\n' +
       '3. Use the web search results below for SPECIFIC real named places — never generic advice.\n' +
-      '4. Schedule outdoor activities on good-weather days, indoor activities (museums, galleries, aquariums, markets, cooking classes) on rainy days. Explain why each day is arranged that way.\n' +
+      '4. Schedule outdoor activities on good-weather days, indoor (museums, galleries, aquariums, markets, cooking classes) on rainy days.\n' +
       '5. For families with children: label what kids will love AND include something for adults each day.\n' +
-      '6. If they have visited before: focus on NEW experiences.\n' +
-      '7. End the plan with concrete next steps and the booking links below.\n\n' +
-      'WEATHER DATA:\n' + (weatherCtx || 'Need destination + both dates to generate forecast.') + '\n\n' +
+      '6. If they visited before: focus on NEW experiences.\n' +
+      '7. End with booking links.\n\n' +
+      'WEATHER:\n' + (weatherCtx || 'Need destination + both dates.') + '\n\n' +
       searchCtx +
-      'BOOKING LINKS (embed as markdown links in your response):\n' + bookingCtx + '\n\n' +
+      'BOOKING LINKS (embed as markdown links):\n' + bookingCtx + '\n\n' +
       'TRIP CONTEXT: ' + JSON.stringify(tripData) + '\n\n' +
-      'STYLE: Warm and specific, never generic. Write like a sharp local friend. Use ## Day 1 headers, **bold place names**, bullet lists, [text](url) links. Include time of day, rough costs, travel time between stops. Reply in the SAME language the user writes in.';
+      'STYLE: Warm and specific. Write like a sharp local friend. Use ## Day 1, **Bold place names**, bullet lists, [text](url) links. Include time of day, rough costs, travel time between stops. Reply in the SAME language the user writes in.';
 
-    // 3. Build Gemini conversation format
-    // Gemini uses "parts" not "content" and roles are "user"/"model" (not "assistant")
-    var geminiHistory = [];
-    for (var j = 0; j < conversationHistory.length - 1; j++) {
-      var msg = conversationHistory[j];
-      geminiHistory.push({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: msg.content }]
-      });
-    }
-    // Last user message
-    var lastMsg = conversationHistory[conversationHistory.length - 1];
-
-    var geminiBody = {
-      system_instruction: { parts: [{ text: systemPrompt }] },
-      contents: geminiHistory.concat([{
-        role: 'user',
-        parts: [{ text: lastMsg.content }]
-      }]),
-      generationConfig: {
-        maxOutputTokens: 2048,
-        temperature: 0.7
-      }
-    };
-
-    // 4. Call Gemini
-    var geminiRes = await fetch(GEMINI_URL + GEMINI_API_KEY, {
+    // 3. Single OpenRouter call — OpenAI-compatible endpoint
+    var orRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(geminiBody)
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
+        'HTTP-Referer': 'https://planaway.netlify.app',
+        'X-Title': 'PlanAway'
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 2000,
+        temperature: 0.7,
+        messages: [{ role: 'system', content: systemPrompt }].concat(conversationHistory)
+      })
     });
 
-    if (!geminiRes.ok) {
-      var err = await geminiRes.text();
-      return { statusCode: 502, body: JSON.stringify({ error: 'Gemini API error ' + geminiRes.status + ': ' + err.slice(0, 400) }) };
+    if (!orRes.ok) {
+      var err = await orRes.text();
+      // If primary model fails, try fallback
+      if (orRes.status === 429 || orRes.status === 503) {
+        var fallbackRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
+            'HTTP-Referer': 'https://planaway.netlify.app',
+            'X-Title': 'PlanAway'
+          },
+          body: JSON.stringify({
+            model: 'deepseek/deepseek-chat:free',
+            max_tokens: 2000,
+            temperature: 0.7,
+            messages: [{ role: 'system', content: systemPrompt }].concat(conversationHistory)
+          })
+        });
+        if (fallbackRes.ok) {
+          var fbData = await fallbackRes.json();
+          var fbText = (fbData.choices && fbData.choices[0] && fbData.choices[0].message && fbData.choices[0].message.content) || 'No response.';
+          return {
+            statusCode: 200,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: fbText, searchesUsed: searchesUsed, weather: weather.ok ? { location: weather.location, board: weather.board } : null, links: links, ok: true })
+          };
+        }
+      }
+      return { statusCode: 502, body: JSON.stringify({ error: 'OpenRouter error ' + orRes.status + ': ' + err.slice(0, 300) }) };
     }
 
-    var geminiData = await geminiRes.json();
-    var text = '';
-    try {
-      text = geminiData.candidates[0].content.parts[0].text || '';
-    } catch(e) {
-      console.error('Gemini parse error:', JSON.stringify(geminiData).slice(0,300));
-      text = 'Sorry, could not generate a response. Please try again.';
-    }
+    var orData = await orRes.json();
+    var text = (orData.choices && orData.choices[0] && orData.choices[0].message && orData.choices[0].message.content) || 'No response. Please try again.';
 
     return {
       statusCode: 200,
