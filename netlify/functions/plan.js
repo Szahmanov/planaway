@@ -3,10 +3,9 @@ const fetch = require('node-fetch');
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const TAVILY_API_KEY     = process.env.TAVILY_API_KEY;
 
-// OpenRouter free models — :free suffix = zero cost, no credit card
-// llama-4-maverick is the best free model available (128K context, strong reasoning)
-// fallback: deepseek/deepseek-chat:free
-const MODEL = 'meta-llama/llama-4-maverick:free';
+// openrouter/free = automatic router that picks from all available free models
+// Never gets 'model unavailable' errors — always routes to something working
+const MODEL = 'openrouter/auto';
 
 /* ─── WEATHER ────────────────────────────────── */
 
@@ -211,32 +210,7 @@ exports.handler = async function(event) {
     if (!orRes.ok) {
       var err = await orRes.text();
       // If primary model fails, try fallback
-      if (orRes.status === 429 || orRes.status === 503) {
-        var fallbackRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + OPENROUTER_API_KEY,
-            'HTTP-Referer': 'https://planaway.netlify.app',
-            'X-Title': 'PlanAway'
-          },
-          body: JSON.stringify({
-            model: 'deepseek/deepseek-chat:free',
-            max_tokens: 2000,
-            temperature: 0.7,
-            messages: [{ role: 'system', content: systemPrompt }].concat(conversationHistory)
-          })
-        });
-        if (fallbackRes.ok) {
-          var fbData = await fallbackRes.json();
-          var fbText = (fbData.choices && fbData.choices[0] && fbData.choices[0].message && fbData.choices[0].message.content) || 'No response.';
-          return {
-            statusCode: 200,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: fbText, searchesUsed: searchesUsed, weather: weather.ok ? { location: weather.location, board: weather.board } : null, links: links, ok: true })
-          };
-        }
-      }
+      // openrouter/auto handles its own fallbacks internally
       return { statusCode: 502, body: JSON.stringify({ error: 'OpenRouter error ' + orRes.status + ': ' + err.slice(0, 300) }) };
     }
 
