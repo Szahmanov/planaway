@@ -1,9 +1,10 @@
 const fetch = require('node-fetch');
 
-const GROQ_API_KEY   = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
-// gemma2-9b-it: 15,000 TPM free tier — highest on Groq free plan
-const MODEL = 'gemma2-9b-it';
+
+// gemini-2.0-flash: 1,000,000 TPM free tier — no rate limit issues
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=';
 
 /* ─── WEATHER ────────────────────────────────── */
 
@@ -72,7 +73,7 @@ async function getWeather(destination, startDate, endDate) {
   }
 }
 
-/* ─── TAVILY (called directly, results injected into prompt) ─ */
+/* ─── TAVILY SEARCH ──────────────────────────── */
 
 async function searchWeb(query) {
   if (!TAVILY_API_KEY) return '[web search unavailable]';
@@ -85,14 +86,14 @@ async function searchWeb(query) {
     if (!r.ok) return '[search failed ' + r.status + ']';
     const data = await r.json();
     const snippets = (data.results || []).slice(0,3)
-      .map(function(x){ return '- ' + x.title + ': ' + (x.content || '').slice(0, 180); })
+      .map(function(x){ return '- ' + x.title + ': ' + (x.content || '').slice(0, 200); })
       .join('\n');
     var out = '';
-    if (data.answer) out += 'Summary: ' + data.answer.slice(0, 250) + '\n\n';
+    if (data.answer) out += 'Summary: ' + data.answer.slice(0, 300) + '\n\n';
     out += snippets;
     return out;
   } catch(e) {
-    return '[search error]';
+    return '[search error: ' + e.message + ']';
   }
 }
 
@@ -116,8 +117,8 @@ function buildLinks(t) {
 
 exports.handler = async function(event) {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method not allowed' };
-  if (!GROQ_API_KEY)   return { statusCode: 500, body: JSON.stringify({ error: 'GROQ_API_KEY not set on server.' }) };
-  if (!TAVILY_API_KEY) return { statusCode: 500, body: JSON.stringify({ error: 'TAVILY_API_KEY not set on server.' }) };
+  if (!GEMINI_API_KEY)  return { statusCode: 500, body: JSON.stringify({ error: 'GEMINI_API_KEY not set on server.' }) };
+  if (!TAVILY_API_KEY)  return { statusCode: 500, body: JSON.stringify({ error: 'TAVILY_API_KEY not set on server.' }) };
 
   var body;
   try { body = JSON.parse(event.body || '{}'); }
@@ -128,85 +129,121 @@ exports.handler = async function(event) {
   if (!conversationHistory.length) return { statusCode: 400, body: JSON.stringify({ error: 'No messages' }) };
 
   try {
-    // 1. Weather — free, parallel fetch
-    var weather = { ok: false };
-    if (tripData.destination && tripData.arrivalDate && tripData.departureDate) {
-      weather = await getWeather(tripData.destination, tripData.arrivalDate, tripData.departureDate);
-    }
+    // 1. Weather + web search run in parallel before the LLM call
+    var weatherPromise = (tripData.destination && tripData.arrivalDate && tripData.departureDate)
+      ? getWeather(tripData.destination, tripData.arrivalDate, tripData.departureDate)
+      : Promise.resolve({ ok: false });
 
-    // 2. Tavily searches run BEFORE Groq, results injected into prompt
-    var searchResults = '';
-    var searchesUsed  = 0;
     var dest = tripData.destination;
     var lastUserMsg = '';
     for (var i = conversationHistory.length - 1; i >= 0; i--) {
       if (conversationHistory[i].role === 'user') { lastUserMsg = conversationHistory[i].content || ''; break; }
     }
 
-    if (dest && lastUserMsg.length > 8) {
-      var results = await Promise.all([
-        searchWeb('top things to do ' + dest + ' ' + new Date().getFullYear()),
-        searchWeb('best local restaurants food ' + dest)
-      ]);
-      searchResults = 'WEB SEARCH RESULTS (cite specific places from these):\n\nAttractions:\n' + results[0] + '\n\nFood & restaurants:\n' + results[1];
-      searchesUsed = 2;
-    }
+    var searchPromise = (dest && lastUserMsg.length > 8)
+      ? Promise.all([
+          searchWeb('top things to do attractions ' + dest + ' ' + new Date().getFullYear()),
+          searchWeb('best local restaurants food ' + dest)
+        ])
+      : Promise.resolve(null);
+
+    var results = await Promise.all([weatherPromise, searchPromise]);
+    var weather       = results[0];
+    var searchResults = results[1];
+    var searchesUsed  = searchResults ? 2 : 0;
 
     var links = buildLinks(tripData);
 
-    // 3. Compact system prompt
+    // 2. Build system prompt
     var weatherCtx = '';
     if (weather.ok) {
       weatherCtx = weather.summary;
     } else if (weather.reason === 'too_far') {
-      weatherCtx = 'Trip is >16 days away, no live forecast. Describe typical seasonal weather for ' + (tripData.destination || 'the destination') + ' during those dates.';
+      weatherCtx = 'Trip is more than 16 days away — no live forecast available yet. Describe typical seasonal weather for ' + (tripData.destination || 'the destination') + ' during those dates instead.';
     } else if (weather.reason === 'past') {
       weatherCtx = 'Those dates are in the past.';
     }
 
-    var bookingLinks = links
+    var searchCtx = '';
+    if (searchResults) {
+      searchCtx = 'WEB SEARCH RESULTS (use specific named places from these in your plan):\n\nAttractions & things to do:\n' + searchResults[0] + '\n\nFood & restaurants:\n' + searchResults[1] + '\n\n';
+    }
+
+    var bookingCtx = links
       ? 'Hotels: ' + links.booking + '\nAirbnb: ' + links.airbnb + '\nCars: ' + links.cars + '\nMap: ' + links.maps
       : 'Provide destination to generate links.';
 
-    var systemPrompt = 'You are PlanAway, an autonomous AI travel planning agent.\n\n' +
-      'RULES:\n' +
-      '- Ask max 2 short questions if key info is missing. Key info: destination, dates, group (adults/kids+ages), interests, budget, visited before, transport.\n' +
-      '- Once you have enough: build a FULL day-by-day itinerary. Do not keep asking questions.\n' +
-      '- Use the web search results below for SPECIFIC named places.\n' +
-      '- Outdoor activities on good-weather days, indoor on rainy days.\n' +
-      '- For families: label what kids love vs adults each day.\n' +
-      '- End with booking links.\n' +
-      '- Reply in the SAME language the user writes in.\n' +
-      '- Format: ## Day 1 — City, **Place Name**, bullet lists.\n\n' +
-      'WEATHER:\n' + (weatherCtx || 'Need destination + dates.') + '\n\n' +
-      (searchResults ? searchResults + '\n\n' : '') +
-      'BOOKING LINKS:\n' + bookingLinks + '\n\n' +
-      'TRIP INFO: ' + JSON.stringify(tripData);
+    var systemPrompt = 'You are PlanAway, an autonomous AI travel planning agent. You create complete, highly personalized day-by-day travel itineraries.\n\n' +
+      'PROCESS:\n' +
+      '1. If missing key facts, ask maximum 2 short questions. Key facts needed: destination, exact dates, who is travelling (adults/kids+ages), interests & pace, budget level, visited before?, transport preference (rental car vs taxi/transit), accommodation type.\n' +
+      '2. Once you have enough information: BUILD the full day-by-day itinerary immediately. Do not keep asking.\n' +
+      '3. Use the web search results below for SPECIFIC real named places — never generic advice.\n' +
+      '4. Schedule outdoor activities on good-weather days, indoor activities (museums, galleries, aquariums, markets, cooking classes) on rainy days. Explain why each day is arranged that way.\n' +
+      '5. For families with children: label what kids will love AND include something for adults each day.\n' +
+      '6. If they have visited before: focus on NEW experiences.\n' +
+      '7. End the plan with concrete next steps and the booking links below.\n\n' +
+      'WEATHER DATA:\n' + (weatherCtx || 'Need destination + both dates to generate forecast.') + '\n\n' +
+      searchCtx +
+      'BOOKING LINKS (embed as markdown links in your response):\n' + bookingCtx + '\n\n' +
+      'TRIP CONTEXT: ' + JSON.stringify(tripData) + '\n\n' +
+      'STYLE: Warm and specific, never generic. Write like a sharp local friend. Use ## Day 1 headers, **bold place names**, bullet lists, [text](url) links. Include time of day, rough costs, travel time between stops. Reply in the SAME language the user writes in.';
 
-    // 4. Single Groq call — no agentic loop, stays within TPM limits
-    var groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    // 3. Build Gemini conversation format
+    // Gemini uses "parts" not "content" and roles are "user"/"model" (not "assistant")
+    var geminiHistory = [];
+    for (var j = 0; j < conversationHistory.length - 1; j++) {
+      var msg = conversationHistory[j];
+      geminiHistory.push({
+        role: msg.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: msg.content }]
+      });
+    }
+    // Last user message
+    var lastMsg = conversationHistory[conversationHistory.length - 1];
+
+    var geminiBody = {
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: geminiHistory.concat([{
+        role: 'user',
+        parts: [{ text: lastMsg.content }]
+      }]),
+      generationConfig: {
+        maxOutputTokens: 2048,
+        temperature: 0.7
+      }
+    };
+
+    // 4. Call Gemini
+    var geminiRes = await fetch(GEMINI_URL + GEMINI_API_KEY, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GROQ_API_KEY },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1800,
-        temperature: 0.7,
-        messages: [{ role: 'system', content: systemPrompt }].concat(conversationHistory)
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(geminiBody)
     });
 
-    if (!groqRes.ok) {
-      var err = await groqRes.text();
-      return { statusCode: 502, body: JSON.stringify({ error: 'Groq API error ' + groqRes.status + ': ' + err.slice(0,300) }) };
+    if (!geminiRes.ok) {
+      var err = await geminiRes.text();
+      return { statusCode: 502, body: JSON.stringify({ error: 'Gemini API error ' + geminiRes.status + ': ' + err.slice(0, 400) }) };
     }
 
-    var groqData = await groqRes.json();
-    var text = (groqData.choices && groqData.choices[0] && groqData.choices[0].message && groqData.choices[0].message.content) || 'No response. Please try again.';
+    var geminiData = await geminiRes.json();
+    var text = '';
+    try {
+      text = geminiData.candidates[0].content.parts[0].text || '';
+    } catch(e) {
+      console.error('Gemini parse error:', JSON.stringify(geminiData).slice(0,300));
+      text = 'Sorry, could not generate a response. Please try again.';
+    }
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, searchesUsed: searchesUsed, weather: weather.ok ? { location: weather.location, board: weather.board } : null, links: links, ok: true })
+      body: JSON.stringify({
+        message: text,
+        searchesUsed: searchesUsed,
+        weather: weather.ok ? { location: weather.location, board: weather.board } : null,
+        links: links,
+        ok: true
+      })
     };
 
   } catch(err) {
